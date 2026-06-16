@@ -1,0 +1,12 @@
+.DS_Store
+/.build
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
+
+# Test fixtures contain real tracking data (post offices, delivery branches).
+# See Tests/TsuiseKitTests/Fixtures/README.md for how to regenerate locally.
+Tests/TsuiseKitTests/Fixtures/*.html
