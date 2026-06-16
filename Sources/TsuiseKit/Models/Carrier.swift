@@ -8,8 +8,8 @@ public enum Carrier: String, Codable, Sendable, CaseIterable, Hashable {
     public var displayName: String {
         switch self {
         case .japanPost: "Japan Post"
-        case .yamato: "ヤマト運輸"
-        case .sagawa: "佐川急便"
+        case .yamato:    "Yamato Transport"
+        case .sagawa:    "Sagawa Express"
         }
     }
 }
