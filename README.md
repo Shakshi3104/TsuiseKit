@@ -77,12 +77,12 @@ public struct TrackingEvent: Codable, Sendable, Hashable {
 |---|---|---|---|
 | Japan Post | GET | status, history, post-office name | — |
 | Yamato | POST | status, history, item type, **estimated delivery time** | Page is JS-assembled; the parser un-escapes `\<`, `\>`, `\/` before parsing |
-| Sagawa | POST | status, history, **estimated delivery time** | Status text is read from `<th>`, not `<td>` |
+| Sagawa | POST | status, history, **estimated delivery time** | Calls the `e-customer.sagawa-exp.co.jp/k2k` Next.js server action and decodes its JSON result; the action ID is rediscovered from the page's JS if it goes stale |
 
 ## Tests
 
 ```sh
-swift test                                    # offline (requires Fixtures/*.html)
+swift test                                    # offline (requires Fixtures/*.html, *.txt)
 RUN_LIVE=1 swift test --filter Live           # hit the real carrier sites
 ```
 

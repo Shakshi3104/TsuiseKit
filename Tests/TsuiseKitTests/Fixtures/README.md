@@ -1,11 +1,11 @@
 # Test Fixtures
 
-This directory holds saved HTML responses from the three carrier tracking pages,
+This directory holds saved responses from the three carrier tracking pages,
 used by `TsuiseKitTests` to verify the parsers offline.
 
 Each fixture is the **raw** response a carrier returned for a real shipment, so
 it contains things like delivery branch names and post-office routing data.
-For that reason the HTML files themselves are gitignored — to run the offline
+For that reason the fixture files themselves are gitignored — to run the offline
 suite you need to regenerate them locally.
 
 ## How to regenerate
@@ -24,12 +24,15 @@ curl -sS -X POST 'https://toi.kuronekoyamato.co.jp/cgi-bin/tneko' \
   --data-urlencode 'number01=<TRACKING_NUMBER>' \
   -o yamato_<TRACKING_NUMBER>.html
 
-# Sagawa (POST)
-curl -sS -X POST 'https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do' \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
+# Sagawa (POST — Next.js server action `searchPackages`; the response is an RSC payload, not HTML.
+# If the action ID is stale, grep the /k2k page's JS chunks for `"searchPackages"`.)
+curl -sS -X POST 'https://e-customer.sagawa-exp.co.jp/k2k' \
+  -H 'Next-Action: 60e3b76ba7f1d28cf3c3fa01680217528f16cd1984' \
+  -H 'Accept: text/x-component' \
   -H 'User-Agent: Mozilla/5.0' \
-  --data-urlencode 'okurijoNo=<TRACKING_NUMBER>' \
-  -o sagawa_<TRACKING_NUMBER>.html
+  -F '_1_tracking_number=<TRACKING_NUMBER>' \
+  -F '0=[null,"$K1"]' \
+  -o sagawa_<TRACKING_NUMBER>.txt
 ```
 
 Update the file names referenced in `TsuiseKitTests.swift` to match. If a
