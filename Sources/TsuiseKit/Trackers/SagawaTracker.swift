@@ -1,16 +1,127 @@
 import Foundation
+import SwiftSoup
 
-/// Sagawa's tracking page (`e-customer.sagawa-exp.co.jp/k2k`) is a Next.js app.
-/// The search form submits a server action (`searchPackages`) that answers with a
-/// React Server Components payload whose result row is plain JSON — no HTML scraping.
-/// The legacy `k2k.sagawa-exp.co.jp/p/web/okurijosearch.do` endpoint now only serves
-/// a Shift_JIS maintenance notice.
+/// Sagawa has been switching its tracking between two sites:
+///
+/// - **Legacy** `k2k.sagawa-exp.co.jp/p/web/okurijosearch.do` — a form POST answering
+///   Windows-31J HTML (`table.ttl02` + `table.table_okurijo_detail2`).
+/// - **e-customer** `e-customer.sagawa-exp.co.jp/k2k` — a Next.js app whose search form
+///   submits a server action (`searchPackages`) answering a React Server Components payload
+///   whose result row is plain JSON.
+///
+/// Whichever one is down at the moment either serves a maintenance notice or redirects to
+/// the other, so `fetch` tries the legacy site first and falls back to e-customer.
 public struct SagawaTracker: Tracker {
     public let carrier: Carrier = .sagawa
 
     public init() {}
 
     public func fetch(trackingNumber: String) async throws -> TrackingInfo {
+        do {
+            return try await searchLegacy(trackingNumber: trackingNumber)
+        } catch TsuiseKitError.notFound {
+            throw TsuiseKitError.notFound
+        } catch {
+            return try await searchECustomer(trackingNumber: trackingNumber)
+        }
+    }
+
+    /// Dispatches on the payload: an RSC stream (`0:{...}` rows) from e-customer, HTML otherwise.
+    public func parse(html: String, trackingNumber: String) throws -> TrackingInfo {
+        if html.drop(while: \.isWhitespace).hasPrefix("0:") {
+            return try parseActionPayload(html, trackingNumber: trackingNumber)
+        }
+        return try parseLegacyHTML(html, trackingNumber: trackingNumber)
+    }
+
+    // MARK: - Legacy k2k site
+
+    private func searchLegacy(trackingNumber: String) async throws -> TrackingInfo {
+        var request = URLRequest(url: legacyURL)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        let number = trackingNumber.replacingOccurrences(of: "-", with: "")
+        request.httpBody = Data("okurijoNo=\(number)".utf8)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw TsuiseKitError.networkFailure(statusCode: http.statusCode)
+        }
+        // The page declares Windows-31J but writes Japanese as numeric character references,
+        // so it is usually plain ASCII; the maintenance notice is raw Shift_JIS.
+        guard let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .shiftJIS) else {
+            throw TsuiseKitError.parseFailure(reason: "Invalid encoding")
+        }
+        return try parseLegacyHTML(html, trackingNumber: trackingNumber)
+    }
+
+    private func parseLegacyHTML(_ html: String, trackingNumber: String) throws -> TrackingInfo {
+        let doc = try SwiftSoup.parse(html)
+
+        // Status table: <table class="table_basic ttl02"> has <th>s = [詳細N, trackingNumber, currentStatus]
+        // and a single <td> containing the message + delivery estimate.
+        guard let statusTable = try doc.select("table.ttl02").first() else {
+            // Maintenance notice or redirect target — not a result page at all.
+            throw TsuiseKitError.parseFailure(reason: "Legacy result page unavailable")
+        }
+        var currentStatus = ""
+        let ths = try statusTable.select("th").array().map {
+            try $0.text().trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if ths.count >= 3 { currentStatus = ths[2] }
+        var estimatedDelivery: String?
+        if let td = try statusTable.select("td").first() {
+            estimatedDelivery = Self.extractValue(after: "配達予定日", from: try td.text())
+        }
+
+        // Events table: the table_okurijo_detail2 whose header has 荷物状況 / 日時 / 担当営業所.
+        var events: [TrackingEvent] = []
+        for table in try doc.select("table.table_okurijo_detail2") {
+            let headerText = try table.select("th").array().map { try $0.text() }.joined()
+            guard headerText.contains("荷物状況") && headerText.contains("担当営業所") else { continue }
+            for row in try table.select("tr") {
+                let cells = try row.select("td")
+                guard cells.size() >= 3 else { continue }
+                if let event = makeEvent(
+                    status: try cells.get(0).text(),
+                    date: try cells.get(1).text(),
+                    office: try cells.get(2).text()
+                ) {
+                    events.append(event)
+                }
+            }
+            break
+        }
+
+        // "該当なし" (no such parcel) still renders the status table, just without history.
+        guard !events.isEmpty else {
+            throw TsuiseKitError.notFound
+        }
+        if currentStatus.isEmpty {
+            currentStatus = events.last?.status ?? ""
+        }
+
+        return TrackingInfo(
+            trackingNumber: trackingNumber,
+            carrier: .sagawa,
+            itemType: nil,
+            currentStatus: currentStatus,
+            estimatedDelivery: estimatedDelivery,
+            events: events
+        )
+    }
+
+    private static func extractValue(after label: String, from text: String) -> String? {
+        guard let range = text.range(of: label) else { return nil }
+        let value = text[range.upperBound...]
+            .trimmingCharacters(in: CharacterSet(charactersIn: ": ：　\t\n"))
+        return value.isEmpty ? nil : value
+    }
+
+    // MARK: - e-customer site
+
+    private func searchECustomer(trackingNumber: String) async throws -> TrackingInfo {
         let cached = await SagawaActionID.shared.current
         do {
             return try await search(trackingNumber: trackingNumber, actionID: cached)
@@ -49,16 +160,16 @@ public struct SagawaTracker: Tracker {
         guard let text = String(data: data, encoding: .utf8) else {
             throw TsuiseKitError.parseFailure(reason: "Invalid encoding")
         }
-        return try parse(html: text, trackingNumber: trackingNumber)
+        return try parseActionPayload(text, trackingNumber: trackingNumber)
     }
 
-    /// Parses the server action's RSC payload (despite the protocol's `html` label).
+    /// Parses the server action's RSC payload.
     ///
     ///     0:{"a":"$@1",...}
     ///     1:{"ok":true,"results":[{"trackingNumber":...,"status":...,"history":[...]}]}
-    public func parse(html: String, trackingNumber: String) throws -> TrackingInfo {
+    private func parseActionPayload(_ payload: String, trackingNumber: String) throws -> TrackingInfo {
         var rows: [String: Substring] = [:]
-        for line in html.split(whereSeparator: \.isNewline) {
+        for line in payload.split(whereSeparator: \.isNewline) {
             guard let colon = line.firstIndex(of: ":") else { continue }
             rows[String(line[..<colon])] = line[line.index(after: colon)...]
         }
@@ -90,17 +201,8 @@ public struct SagawaTracker: Tracker {
             throw TsuiseKitError.notFound
         }
 
-        let events: [TrackingEvent] = package.history.compactMap { entry in
-            let status = entry.status.trimmingCharacters(in: CharacterSet(charactersIn: "↓⇒ \u{3000}"))
-            let dateRaw = entry.date.trimmingCharacters(in: .whitespacesAndNewlines)
-            let office = entry.office?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if status.isEmpty && dateRaw.isEmpty { return nil }
-            return TrackingEvent(
-                rawDate: dateRaw,
-                date: parseDate(dateRaw),
-                status: status,
-                location: office.isEmpty ? nil : office
-            )
+        let events = package.history.compactMap {
+            makeEvent(status: $0.status, date: $0.date, office: $0.office ?? "")
         }
 
         // "該当なし" (no such parcel) comes back as ok:true with an empty history.
@@ -152,6 +254,22 @@ public struct SagawaTracker: Tracker {
         throw TsuiseKitError.parseFailure(reason: "searchPackages action not found")
     }
 
+    // MARK: - Shared
+
+    /// Both sites prefix history statuses with `↓` / `⇒` arrows.
+    private func makeEvent(status: String, date: String, office: String) -> TrackingEvent? {
+        let status = status.trimmingCharacters(in: CharacterSet(charactersIn: "↓⇒ \u{3000}").union(.whitespacesAndNewlines))
+        let dateRaw = date.trimmingCharacters(in: .whitespacesAndNewlines)
+        let office = office.trimmingCharacters(in: .whitespacesAndNewlines)
+        if status.isEmpty && dateRaw.isEmpty { return nil }
+        return TrackingEvent(
+            rawDate: dateRaw,
+            date: parseDate(dateRaw),
+            status: status,
+            location: office.isEmpty ? nil : office
+        )
+    }
+
     private func parseDate(_ raw: String) -> Date? {
         let cal = Calendar(identifier: .gregorian)
         let year = cal.component(.year, from: Date())
@@ -198,6 +316,7 @@ private struct SearchResult: Decodable {
     }
 }
 
+private let legacyURL = URL(string: "https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do")!
 private let pageURL = URL(string: "https://e-customer.sagawa-exp.co.jp/k2k")!
 
 private let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"

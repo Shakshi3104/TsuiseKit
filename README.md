@@ -77,7 +77,7 @@ public struct TrackingEvent: Codable, Sendable, Hashable {
 |---|---|---|---|
 | Japan Post | GET | status, history, post-office name | — |
 | Yamato | POST | status, history, item type, **estimated delivery time** | Page is JS-assembled; the parser un-escapes `\<`, `\>`, `\/` before parsing |
-| Sagawa | POST | status, history, **estimated delivery time** | Calls the `e-customer.sagawa-exp.co.jp/k2k` Next.js server action and decodes its JSON result; the action ID is rediscovered from the page's JS if it goes stale |
+| Sagawa | POST | status, history, **estimated delivery time** | Tries the legacy `k2k.sagawa-exp.co.jp` form (HTML) first and falls back to the `e-customer.sagawa-exp.co.jp/k2k` Next.js server action (JSON) when it is unavailable — Sagawa switches between the two; the action ID is rediscovered from the page's JS if it goes stale |
 
 ## Tests
 
