@@ -24,7 +24,13 @@ curl -sS -X POST 'https://toi.kuronekoyamato.co.jp/cgi-bin/tneko' \
   --data-urlencode 'number01=<TRACKING_NUMBER>' \
   -o yamato_<TRACKING_NUMBER>.html
 
-# Sagawa (POST — Next.js server action `searchPackages`; the response is an RSC payload, not HTML.
+# Sagawa, legacy k2k site (POST, HTML)
+curl -sS -X POST 'https://k2k.sagawa-exp.co.jp/p/web/okurijosearch.do' \
+  -H 'User-Agent: Mozilla/5.0' \
+  --data-urlencode 'okurijoNo=<TRACKING_NUMBER>' \
+  -o sagawa_<TRACKING_NUMBER>.html
+
+# Sagawa, e-customer site (POST — Next.js server action `searchPackages`; the response is an RSC payload, not HTML.
 # If the action ID is stale, grep the /k2k page's JS chunks for `"searchPackages"`.)
 curl -sS -X POST 'https://e-customer.sagawa-exp.co.jp/k2k' \
   -H 'Next-Action: 60e3b76ba7f1d28cf3c3fa01680217528f16cd1984' \

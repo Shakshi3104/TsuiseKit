@@ -111,3 +111,47 @@ struct SagawaPayloadTests {
         }
     }
 }
+
+@Suite("Sagawa legacy k2k HTML")
+struct SagawaLegacyTests {
+
+    @Test(
+        "Sagawa parses the legacy result page for 491099319060",
+        .enabled(if: Bundle.module.url(forResource: "sagawa_491099.html", withExtension: nil, subdirectory: "Fixtures") != nil,
+                 "Fixture missing — see Tests/TsuiseKitTests/Fixtures/README.md to regenerate")
+    )
+    func sagawaLegacy() throws {
+        let url = try #require(Bundle.module.url(forResource: "sagawa_491099.html", withExtension: nil, subdirectory: "Fixtures"))
+        let html = try String(contentsOf: url, encoding: .utf8)
+        let info = try SagawaTracker().parse(html: html, trackingNumber: "491099319060")
+
+        #expect(info.carrier == .sagawa)
+        #expect(info.currentStatus == "輸送中")
+        #expect(info.estimatedDelivery == "11月25日")
+        #expect(info.events.map(\.status) == ["集荷", "輸送中"])
+        #expect(info.events.first?.rawDate == "11/24 18:13")
+        #expect(info.events.first?.location == "練馬営業所")
+    }
+
+    @Test("Sagawa reports 該当なし on the legacy page as notFound")
+    func sagawaLegacyNotFound() throws {
+        let html = """
+        <html><body><table class="table_basic ttl02"><tr><th>詳細1</th><th>000000000001</th><th>該当なし</th></tr>
+        <tr><td>恐れ入りますが、お問い合せ送り状No.をお確かめください。</td></tr></table></body></html>
+        """
+        #expect(throws: TsuiseKitError.notFound) {
+            try SagawaTracker().parse(html: html, trackingNumber: "000000000001")
+        }
+    }
+
+    @Test("Sagawa treats a legacy page without a result table as parseFailure")
+    func sagawaLegacyMaintenance() {
+        let html = "<html><body><p>ただいまメンテナンス中です。</p></body></html>"
+        #expect {
+            try SagawaTracker().parse(html: html, trackingNumber: "491099319060")
+        } throws: { error in
+            if case TsuiseKitError.parseFailure = error { return true }
+            return false
+        }
+    }
+}

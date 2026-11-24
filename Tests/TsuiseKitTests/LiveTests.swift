@@ -27,7 +27,7 @@ struct LiveTests {
 
     @Test("Sagawa live fetch")
     func sagawaLive() async throws {
-        let info = try await SagawaTracker().fetch(trackingNumber: "369024282351")
+        let info = try await SagawaTracker().fetch(trackingNumber: "491099319060")
         #expect(info.carrier == .sagawa)
         #expect(!info.events.isEmpty)
         #expect(!info.currentStatus.isEmpty)
